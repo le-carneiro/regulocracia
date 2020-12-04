@@ -1,0 +1,290 @@
+---
+title: "Regulocracia Federal Brasileira"
+author: "Leandro Alves Carneiro"
+date: "04/12/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE, warning = FALSE, message = FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+## A Regulocracia Federal Brasileira. O que é?
+
+O termo "regulocracia" é comumente utilizado para se referir à burocracia (no sentido weberiano) das Agências reguladoras. Neste trabalho foram utilizadas como referência as 11 autarquias listadas no art. 2º da Lei nº 13.848/2019, nova Lei das Agências Reguladoras <http://www.planalto.gov.br/ccivil_03/_Ato2019-2022/2019/Lei/L13848.htm>:
+
+- Agência Nacional de Águas – ANA;
+- Agência Nacional de Aviação Civil – ANAC;
+- Agência Nacional de Energia Elétrica – ANEEL;
+- Agência Nacional de Mineração – ANM;
+- Agência Nacional de Saúde Suplementar – ANS;
+- Agência Nacional de Telecomunicações – Anatel;
+- Agência Nacional de Transportes Aquaviários – ANTAQ;
+- Agência Nacional de Transportes Terrestres – ANTT;
+- Agência Nacional de Vigilância Sanitária – Anvisa;
+- Agência Nacional do Cinema – Ancine;
+- Agência Nacional do Petróleo, Gás Natural e Biocombustíveis – ANP.
+    
+## Metodologia
+Para obtenção dos dados empíricos utilizados neste trabalho, foram utilizadas bases de dados do Portal da Transparência <http://www.portaldatransparencia.gov.br/download-de-dados/servidores> referentes aos servidores civis empregados pela União no mês de janeiro de 2020. Após a extração, os dados foram importados para o R, que foi o software utilizado para manipulação.
+A base de dados utilizada fornece diversas informações sobre os servidores, como o nome completo e seus órgãos de lotação e de exercício. Essas duas últimas informações foram essenciais para o presente trabalho, pois com elas pode-se saber se as agências reguladoras têm burocracias próprias, os seja, servidores que têm vínculos permanentes com a instituição. Pode-se supor também que esses servidores têm um maior grau de comprometimento com a agência do que servidores cedidos, o que seria uma aproximação da variável “commitment”, citada por Brynard (2009) como uma importante variável na capacidade de um agente estatal implementar políticas públicas.
+Além disso, pode-se saber se servidores das agências reguladoras estão sendo cedidos a outros órgãos, movimento que, se realizado em excesso, pode também minar a capacidade de a agência executar seu trabalho. Ressalta-se que, para este trabalho, o interesse principal era no órgão de exercício, pois esse campo mostra os servidores que efetivamente atuam nas agências. 
+Vale mencionar também que havia muitos registros duplicados, uma vez que um servidor que exerce um cargo comissionado aparecia duas vezes: uma primeira vez para o seu cargo efetivo e uma segunda vez para o cargo comissionado que ocupa.
+Com os dados de lotação e exercício, foi construída uma matriz de incidência, ou seja, nas linhas foram colocadas as informações dos órgãos de origem (lotação) e nas colunas as informações dos órgãos de exercício. Com isso foi possível saber quantos servidores de determinada agência são provenientes de sua burocracia própria e quantos proveem de outros órgãos e ainda quais são esses outros órgãos. Por esta razão, a matriz não é 11x11, com dados somente das agências, mas 129 x 129. Ou seja, além das 11 agências, existem ainda 118 órgãos que cedem ou recebem servidores provenientes das agências reguladoras.
+
+```{r preparacao, results = "hide", warning = FALSE, message = FALSE, cache = FALSE}
+#### Requisitos ####
+library(tibble)
+library(dplyr)
+library(igraph)
+library(janitor)
+library(ggplot2)
+library(magrittr)
+
+#### Importanto dados ####
+# Dados baixados de: http://www.portaldatransparencia.gov.br/download-de-dados/servidores
+# ano 2020, mês janeiro e servidores civis
+servidores_geral <-  read.csv2("arquivos//202001_Cadastro.csv")
+glimpse(servidores_geral)
+servidores_geral$ORG_LOTACAO <- factor(servidores_geral$ORG_LOTACAO)
+
+nlevels(servidores_geral$ORG_LOTACAO) # verificando a quantidade de órgãos
+
+orgaos <- levels(servidores_geral$ORG_LOTACAO)
+
+#### Filtrando servidores das agências ####
+agencias <- c("Agência Nacional de Águas", 
+              "Agência Nacional de Aviação Civil",
+              "Agência Nacional de Energia Elétrica",
+              "Agência Nacional de Mineração",
+              "Agência Nacional de Saúde Suplementar",
+              "Agência Nacional de Telecomunicações",
+              "Agência Nacional de Transportes Aquaviários",
+              "Agência Nacional de Transportes Terrestres",
+              "Agência Nacional de Vigilância Sanitária",
+              "Agência Nacional do Cinema",
+              "Agência Nacional do Petróleo, Gás Natural e B")
+
+agencias_abrev <- case_when(
+  agencias == "Agência Nacional de Águas" ~ "ANA",
+  agencias == "Agência Nacional de Aviação Civil" ~ "ANAC",
+  agencias == "Agência Nacional de Energia Elétrica" ~ "ANEEL",
+  agencias == "Agência Nacional de Mineração" ~ "ANM",
+  agencias == "Agência Nacional de Saúde Suplementar" ~ "ANS",
+  agencias == "Agência Nacional de Telecomunicações" ~ "Anatel",
+  agencias == "Agência Nacional de Transportes Aquaviários" ~ "ANTAQ",
+  agencias == "Agência Nacional de Transportes Terrestres" ~ "ANTT",
+  agencias == "Agência Nacional de Vigilância Sanitária" ~ "Anvisa",
+  agencias == "Agência Nacional do Cinema" ~ "Ancine",
+  agencias == "Agência Nacional do Petróleo, Gás Natural e B" ~ "ANP",
+  TRUE ~ as.character(agencias))
+
+servidores_agencias <- servidores_geral %>% 
+  dplyr::filter(ORG_LOTACAO %in% agencias | ORG_EXERCICIO %in% agencias) 
+# Assim pegamos tanto os servidores que estão cedidos para outros órgãos,
+# como aqueles que foram cedidos para as agências
+
+#### Colocando nomes mais curtos nas agências ####
+servidores_agencias$ORG_LOTACAO <- case_when(
+  servidores_agencias$ORG_LOTACAO == "Agência Nacional de Águas" ~ "ANA",
+  servidores_agencias$ORG_LOTACAO == "Agência Nacional de Aviação Civil" ~ "ANAC",
+  servidores_agencias$ORG_LOTACAO == "Agência Nacional de Energia Elétrica" ~ "ANEEL",
+  servidores_agencias$ORG_LOTACAO == "Agência Nacional de Mineração" ~ "ANM",
+  servidores_agencias$ORG_LOTACAO == "Agência Nacional de Saúde Suplementar" ~ "ANS",
+  servidores_agencias$ORG_LOTACAO == "Agência Nacional de Telecomunicações" ~ "Anatel",
+  servidores_agencias$ORG_LOTACAO == "Agência Nacional de Transportes Aquaviários" ~ "ANTAQ",
+  servidores_agencias$ORG_LOTACAO == "Agência Nacional de Transportes Terrestres" ~ "ANTT",
+  servidores_agencias$ORG_LOTACAO == "Agência Nacional de Vigilância Sanitária" ~ "Anvisa",
+  servidores_agencias$ORG_LOTACAO == "Agência Nacional do Cinema" ~ "Ancine",
+  servidores_agencias$ORG_LOTACAO == "Agência Nacional do Petróleo, Gás Natural e B" ~ "ANP",
+  TRUE ~ as.character(servidores_agencias$ORG_LOTACAO))
+
+servidores_agencias$ORG_EXERCICIO <- case_when(
+  servidores_agencias$ORG_EXERCICIO == "Agência Nacional de Águas" ~ "ANA",
+  servidores_agencias$ORG_EXERCICIO == "Agência Nacional de Aviação Civil" ~ "ANAC",
+  servidores_agencias$ORG_EXERCICIO == "Agência Nacional de Energia Elétrica" ~ "ANEEL",
+  servidores_agencias$ORG_EXERCICIO == "Agência Nacional de Mineração" ~ "ANM",
+  servidores_agencias$ORG_EXERCICIO == "Agência Nacional de Saúde Suplementar" ~ "ANS",
+  servidores_agencias$ORG_EXERCICIO == "Agência Nacional de Telecomunicações" ~ "Anatel",
+  servidores_agencias$ORG_EXERCICIO == "Agência Nacional de Transportes Aquaviários" ~ "ANTAQ",
+  servidores_agencias$ORG_EXERCICIO == "Agência Nacional de Transportes Terrestres" ~ "ANTT",
+  servidores_agencias$ORG_EXERCICIO == "Agência Nacional de Vigilância Sanitária" ~ "Anvisa",
+  servidores_agencias$ORG_EXERCICIO == "Agência Nacional do Cinema" ~ "Ancine",
+  servidores_agencias$ORG_EXERCICIO == "Agência Nacional do Petróleo, Gás Natural e B" ~ "ANP",
+  TRUE ~ as.character(servidores_agencias$ORG_EXERCICIO))
+
+#### Retirando nomes duplicados ####
+# Fazer um resumo_exercicio e um resumo_lotacao desconsiderando os duplicados.
+# O objetivo é fazer o grafo de-para
+
+servidores_agencias_n_duplic <- servidores_agencias %>% # desta maneira, retiramos os casos duplicados
+  distinct(NOME, .keep_all = TRUE) %>% 
+  select(ORG_LOTACAO, ORG_EXERCICIO) %>% 
+  mutate(lot_exec = paste(ORG_LOTACAO, ORG_EXERCICIO, sep = "-"))
+
+servidores_agencias_n_duplic$ORG_LOTACAO <- factor(servidores_agencias_n_duplic$ORG_LOTACAO)
+servidores_agencias_n_duplic$ORG_EXERCICIO <- factor(servidores_agencias_n_duplic$ORG_EXERCICIO)
+
+resumo <- servidores_agencias_n_duplic %>% # contando os casos
+  group_by(lot_exec) %>% 
+  summarise(lot_exec_n = n())
+
+# vendo todos os órgãos
+# alguns estavam na lotação (83) e outros só no exercício (83)
+# juntando os dois e eliminando os repetitos, temos 129 órgãos
+lotacao <- levels(servidores_agencias_n_duplic$ORG_LOTACAO) %>% 
+  as.data.frame() # 83 níveis
+exercicio <- levels(servidores_agencias_n_duplic$ORG_EXERCICIO) %>% 
+  as.data.frame() # 83 níveis
+
+lotacao_exercicio <- bind_rows(lotacao, exercicio) %>% 
+  distinct()# 129 níveis
+colnames(lotacao_exercicio) <- "orgao"
+lotacao_exercicio <- data.frame(sort(lotacao_exercicio$orgao))
+colnames(lotacao_exercicio) <- "orgao"
+
+lotacao_exercicio_fator <- factor(lotacao_exercicio$orgao)
+nlevels(lotacao_exercicio_fator)
+
+matriz_grafo <- data.frame(matrix(0, nrow = nlevels(lotacao_exercicio_fator), ncol = nlevels(lotacao_exercicio_fator)))
+colnames(matriz_grafo) <- lotacao_exercicio$orgao
+rownames(matriz_grafo) <- lotacao_exercicio$orgao
+
+#sum(servidores_agencias_n_duplic$ORG_LOTACAO == "ANA" & servidores_agencias_n_duplic$ORG_EXERCICIO == "ANA")
+
+
+for(i in levels(lotacao_exercicio_fator)) {
+  for(j in levels(lotacao_exercicio_fator)) {
+    a <- paste(i,j, sep = "-")
+    if (a %in% resumo$lot_exec) matriz_grafo[i,j] <- resumo$lot_exec_n[which(resumo$lot_exec %in% a)] 
+    # verifica se há aquele tipo de "transferência", caso sim, recebe o valor,
+    # se não tiver, permanece zero
+    }
+} 
+
+```
+
+## Análise dos resultados empíricos
+
+### Tamanho das agências:
+Uma das primeiras informações para se caracterizar a burocracia das agências é o tamanho seu corpo de servidores, o que é sintetizado no gráfico abaixo:
+
+```{r tamanho_ag, echo=FALSE, warning = FALSE, message = FALSE}
+#### Plotando o tamanho das agências ####
+tam_ag <- servidores_agencias_n_duplic %>%
+  group_by(ORG_EXERCICIO) %>% 
+  filter(ORG_EXERCICIO %in% agencias_abrev) %>%
+  count(ORG_EXERCICIO, ORG_LOTACAO)
+
+tam_ag$ORG_EXERCICIO <- as.character(tam_ag$ORG_EXERCICIO)
+tam_ag$ORG_LOTACAO <- as.character(tam_ag$ORG_LOTACAO)
+
+tam_ag <- tam_ag %>%
+  mutate(iguais = case_when(
+    ORG_EXERCICIO == ORG_LOTACAO ~ 1,TRUE ~ 0),
+    not_iguais = case_when (
+    ORG_EXERCICIO != ORG_LOTACAO ~ 1,TRUE ~ 0))
+
+tam_ag$iguais <- tam_ag$n * tam_ag$iguais
+tam_ag$not_iguais <- tam_ag$n * tam_ag$not_iguais
+
+tam_ag_resumo <- tam_ag %>%
+                 summarise(origens = n(), total = sum(n), proprios = sum(iguais),
+                           percent_prop = 100*(proprios/total)) %>% 
+                 arrange(desc(total))
+
+write.table(tam_ag_resumo, file = "tam_ag_resumo.txt", sep = ";", quote = FALSE, row.names = FALSE)
+
+tam_ag_resumo %>% 
+    ggplot2::ggplot(mapping = aes(x = reorder(ORG_EXERCICIO, total), y = total)) +
+    geom_col() +
+    theme_minimal() +
+    labs(title = "Total de servidores das agências reguladoras federais",
+         x="", y="Total de servidores") +
+    theme(plot.title = element_text(hjust = 0.5)) +
+    geom_hline(yintercept=500, linetype="dashed", color = "black") +
+    geom_hline(yintercept=1250, linetype="dashed", color = "black") +
+    ggsave("tam_ag.jpg")
+```
+
+De maneira geral, quanto ao tamanho, percebe-se que existem basicamente três grupos de agências, as grandes, compostas por Anvisa, Anatel e ANAC, as médias, compostas por ANTT, ANM, ANP, ANS e ANEEL e as pequenas, compostas por Ancine, ANTAQ e ANA. Essa classificação foi feita tendo como pontos de corte os valores de 500 servidores e 1250 servidores, mas outros valores poderiam ser escolhidos, o que não invalidada a percepção da grande heterogeneidade desses órgãos.
+O tamanho da agência é uma variável importante, pois pode, em caso de número reduzido de servidores, ser um gargalo na qualidade regulatória da agência, bem como reflete também a capacidade de fiscalização do órgão, cujas necessidades variam bastante de acordo com a  do setor regulado.
+Uma avaliação interessante seria separar os servidores entre aqueles ligados à atividade de fiscalização e aqueles ligados à regulação econômica. Isso traria uma noção de descentralização das atividades, bem como uma possível avaliação dos burocratas de nível de rua, já que a atividade de fiscalização tem relação direta com os entes regulados e, em algumas situações, com a própria população.
+
+
+### Índice de captura da regulocracia pelo governo
+Esse índice mede o quanto a regulocracia de uma agência reguladora pode estar capturada pelo governo. As agências são autarquias que gozam de autonomia frente ao Poder Executivo. O presente índice procura medir o quanto a burocracia das agências reguladoras é composta por servidores próprios ou advindos do governo.
+O índice incorpora também a quantidade de servidores que foram retirados das agências, ou seja, que estão em exercício em outros órgãos, já que esse pode ser também um mecanismo para o "esvaziamento da agência.
+Esse índice é calculado a partir da média de dois indicadores, um referente aos servidores cedidos a outros órgãos e outro referente aos servidores em exercício provenientes de outros órgãos.
+As fórmulas ficam assim:
+I_cedidos = número de servidores cedidos / número de servidores lotados.
+I_exercício = número de servidores de outros órgãos em exercício / 
+número de servires em exercício
+I_captura_gov = (I_cedidos + I_exercício) / 2
+Portanto, para o cálculo do índice, são utilizadas 4 variáveis:
+- número de servidores cedidos;
+- número de servidores de outros órgãos em exercício;
+- número de servidores lotados;
+- número de servires em exercício.
+O gráfico abaixo ilustra esse indicador:
+```{r indicadores, echo=FALSE, warning = FALSE, message = FALSE}
+# cálculo do número de servidores lotados
+n_lotados <- servidores_agencias_n_duplic %>% 
+  group_by(ORG_LOTACAO) %>% 
+  count(ORG_LOTACAO) %>% 
+  filter(ORG_LOTACAO %in% agencias_abrev)
+
+# cálculo do número de servidores em exercício
+n_exercicio <- servidores_agencias_n_duplic %>% 
+  group_by(ORG_EXERCICIO) %>% 
+  count(ORG_EXERCICIO) %>% 
+  filter(ORG_EXERCICIO %in% agencias_abrev)
+
+# cálculo do número de servidores cedidos a outros órgãos  
+n_cedidos <- servidores_agencias_n_duplic %>% 
+  group_by(ORG_LOTACAO) %>%
+  filter(as.character(ORG_LOTACAO) != as.character(ORG_EXERCICIO) 
+         & ORG_LOTACAO %in% agencias_abrev) %>% 
+  count(ORG_LOTACAO)
+
+# cálculo do número de servidores recebidos de outros órgãos  
+n_recebidos <- servidores_agencias_n_duplic %>% 
+  group_by(ORG_EXERCICIO) %>%
+  filter(as.character(ORG_EXERCICIO) != as.character(ORG_LOTACAO) 
+         & ORG_EXERCICIO %in% agencias_abrev) %>% 
+  count(ORG_EXERCICIO)
+
+# padronizando os nomes para poder juntas numa única tabela
+colnames(n_lotados)   <- c("agencia", "n")
+colnames(n_exercicio) <- c("agencia", "n")
+colnames(n_cedidos)   <- c("agencia", "n")
+colnames(n_recebidos) <- c("agencia", "n")
+
+# juntando na tabela indicadores
+indicadores <- left_join(n_lotados, n_exercicio, by = "agencia") %>% 
+  left_join(n_cedidos, by = "agencia") %>% 
+  left_join(n_recebidos, by = "agencia")
+
+# nomeando as variáveis da tabela de acordo com a ordem acima
+colnames(indicadores) = c("agencia", "n_lotados", "n_exercicio", "n_cedidos", "n_recebidos")
+
+# Calculando os indicadores
+indicadores <- indicadores %>% 
+  mutate(indice_cedidos = n_cedidos/n_lotados) %>% 
+  mutate(indice_recebidos = n_recebidos/n_exercicio) %>% 
+  mutate(indice_captura_gov = (indice_cedidos + indice_recebidos)/2)
+
+indicadores %>% 
+  ggplot2::ggplot(mapping = aes(x = reorder(agencia, indice_captura_gov), y = indice_captura_gov)) +
+  geom_col() +
+  theme_minimal()
+````
+
+## Cálculo do Alfa de Cronbach
+Para se verificar a confiabilidade do indicador, fez-se o cálculo do Alfa de Cronbach a partir das variáveis mencionadas acima.
+```{r alfa_cronbach, echo = FALSE, warning = FALSE, message = FALSE}
+library(psych)
+alfa <- alpha(indicadores[,2:5]) # deixando só as variáveis iniciais para o cálculo do indicador
+
+````
+O resultado foi um Alfa de Cronbach com valor de `r alfa$total$std.alpha`. Portanto, um valor razoável para utilização.
